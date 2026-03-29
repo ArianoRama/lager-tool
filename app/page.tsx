@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import * as XLSX from "xlsx";
+import * as XLSX from "xlsx-js-style";
 
 type Mitarbeiter = {
   name: string;
@@ -36,7 +36,7 @@ const plaetze = [
   "8B",
 ];
 
-const stundenOptionen = ["07", "08", "09", "10", "11", "12", "13", "14", "15"];
+const stundenOptionen = ["06", "07", "08", "09", "10", "11", "12", "13", "14", "15"];
 
 function timeToMinutes(time: string) {
   const [hours, minutes] = time.split(":").map(Number);
@@ -67,7 +67,7 @@ function shuffleArray<T>(array: T[]) {
 
 function generateBandSlots(
   mitarbeiterListe: Mitarbeiter[],
-  dayStart = "07:00",
+  dayStart = "06:00",
   dayEnd = "15:00",
   intervalMinutes = 30
 ): BandSlot[] {
@@ -128,7 +128,7 @@ function generateBandSlots(
 
 function generateRandomBandSlots(
   mitarbeiterListe: Mitarbeiter[],
-  dayStart = "07:00",
+  dayStart = "06:00",
   dayEnd = "15:00",
   intervalMinutes = 30
 ): BandSlot[] {
@@ -377,7 +377,7 @@ export default function Home() {
     }
 
     setName("");
-    setStartStunde("07");
+    setStartStunde("06");
     setEndStunde("15");
     setStammplatz("");
   };
@@ -514,6 +514,24 @@ export default function Home() {
     });
 
     const ws = XLSX.utils.aoa_to_sheet(rows);
+    const range = XLSX.utils.decode_range(ws["!ref"]!);
+
+for (let R = range.s.r; R <= range.e.r; ++R) {
+  for (let C = range.s.c; C <= range.e.c; ++C) {
+    const cellAddress = XLSX.utils.encode_cell({ r: R, c: C });
+
+    if (!ws[cellAddress]) continue;
+
+    ws[cellAddress].s = {
+      border: {
+        top: { style: "medium" },
+        bottom: { style: "medium" },
+        left: { style: "medium" },
+        right: { style: "medium" },
+      },
+    };
+  }
+}
 
     ws["!cols"] = [
       { wch: 12 },
