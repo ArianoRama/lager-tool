@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import * as XLSX from "xlsx";
 
 type Mitarbeiter = {
   name: string;
@@ -55,6 +56,15 @@ function getCurrentTimeString() {
   return `${hours}:${minutes}`;
 }
 
+function shuffleArray<T>(array: T[]) {
+  const copy = [...array];
+  for (let i = copy.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
+
 function generateBandSlots(
   mitarbeiterListe: Mitarbeiter[],
   dayStart = "07:00",
@@ -102,6 +112,68 @@ function generateBandSlots(
     kandidaten.sort((a, b) => einsaetze[a.name] - einsaetze[b.name]);
 
     const ausgewaehlt = kandidaten[0];
+
+    slots.push({
+      start: slotStart,
+      end: slotEnd,
+      mitarbeiterName: ausgewaehlt.name,
+    });
+
+    einsaetze[ausgewaehlt.name] += 1;
+    letzterMitarbeiter = ausgewaehlt.name;
+  }
+
+  return slots;
+}
+
+function generateRandomBandSlots(
+  mitarbeiterListe: Mitarbeiter[],
+  dayStart = "07:00",
+  dayEnd = "15:00",
+  intervalMinutes = 30
+): BandSlot[] {
+  const slots: BandSlot[] = [];
+  const startMinutes = timeToMinutes(dayStart);
+  const endMinutes = timeToMinutes(dayEnd);
+
+  const einsaetze: Record<string, number> = {};
+  mitarbeiterListe.forEach((m) => {
+    einsaetze[m.name] = 0;
+  });
+
+  let letzterMitarbeiter = "";
+
+  for (let current = startMinutes; current < endMinutes; current += intervalMinutes) {
+    const slotStart = minutesToTime(current);
+    const slotEnd = minutesToTime(current + intervalMinutes);
+
+    const verfuegbareMitarbeiter = mitarbeiterListe.filter((m) => {
+      return (
+        timeToMinutes(m.start) <= current &&
+        timeToMinutes(m.end) >= current + intervalMinutes
+      );
+    });
+
+    if (verfuegbareMitarbeiter.length === 0) {
+      slots.push({
+        start: slotStart,
+        end: slotEnd,
+        mitarbeiterName: "Niemand verfügbar",
+      });
+      letzterMitarbeiter = "";
+      continue;
+    }
+
+    const ohneLetzten = verfuegbareMitarbeiter.filter(
+      (m) => m.name !== letzterMitarbeiter
+    );
+
+    const kandidaten = ohneLetzten.length > 0 ? ohneLetzten : verfuegbareMitarbeiter;
+
+    const minEinsaetze = Math.min(...kandidaten.map((m) => einsaetze[m.name]));
+    const besteKandidaten = kandidaten.filter((m) => einsaetze[m.name] === minEinsaetze);
+    const gemischt = shuffleArray(besteKandidaten);
+    const ausgewaehlt = gemischt[0];
 
     slots.push({
       start: slotStart,
@@ -368,6 +440,100 @@ export default function Home() {
     setBandPlan(autoBandPlan);
   };
 
+  const handleBandNeuMischen = () => {
+    const neuerBandPlan = generateRandomBandSlots(mitarbeiterListe);
+    setBandPlan(neuerBandPlan);
+  };
+
+  const handleTischNeuMischen = () => {
+    const jetzt = Date.now();
+    const fuenfMinuten = 5 * 60 * 1000;
+
+    const festeMitarbeiter = mitarbeiterListe.filter(
+      (m) => m.stammplatz && plaetze.includes(m.stammplatz)
+    );
+
+    const variableMitarbeiter = mitarbeiterListe.filter((m) => !m.stammplatz);
+
+    const festePlaetze = festeMitarbeiter.map((m) => m.platz);
+    const freiePlaetze = plaetze.filter((platz) => !festePlaetze.includes(platz));
+
+    const gemischteMitarbeiter = shuffleArray(variableMitarbeiter);
+
+    const altePlaetzeMap = new Map(mitarbeiterListe.map((m) => [m.name, m.platz]));
+
+    const neueVariableMitarbeiter = gemischteMitarbeiter.map((m, index) => ({
+      ...m,
+      platz: freiePlaetze[index],
+    }));
+
+    const neueListe = [...festeMitarbeiter, ...neueVariableMitarbeiter].sort(
+      (a, b) => plaetze.indexOf(a.platz) - plaetze.indexOf(b.platz)
+    );
+
+    const neueOrange: Record<string, number> = {};
+    neueListe.forEach((m) => {
+      const alterPlatz = altePlaetzeMap.get(m.name);
+      if (alterPlatz && alterPlatz !== m.platz) {
+        neueOrange[m.platz] = jetzt + fuenfMinuten;
+      }
+    });
+
+    setMitarbeiterListe(neueListe);
+    setOrangePlaetze((prev) => ({
+      ...prev,
+      ...neueOrange,
+    }));
+  };
+
+  const handleExcelDownload = () => {
+    const rows: string[][] = Array.from({ length: 30 }, () =>
+      Array.from({ length: 6 }, () => "")
+    );
+
+    rows[0][0] = "Tischordnung";
+    rows[0][3] = "Band";
+
+    rows[2][0] = "Tisch";
+    rows[2][1] = "Name";
+    rows[2][3] = "Band";
+    rows[2][4] = "Name";
+
+    plaetze.forEach((platz, index) => {
+      const rowIndex = 4 + index;
+      const mitarbeiter = mitarbeiterListe.find((m) => m.platz === platz);
+      rows[rowIndex][0] = platz;
+      rows[rowIndex][1] = mitarbeiter?.name ?? "";
+    });
+
+    bandPlan.forEach((slot, index) => {
+      const rowIndex = 4 + index;
+      rows[rowIndex][3] = `${slot.start}-${slot.end}`;
+      rows[rowIndex][4] =
+        slot.mitarbeiterName === "Niemand verfügbar" ? "" : slot.mitarbeiterName;
+    });
+
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+
+    ws["!cols"] = [
+      { wch: 12 },
+      { wch: 18 },
+      { wch: 4 },
+      { wch: 14 },
+      { wch: 18 },
+      { wch: 4 },
+    ];
+
+    ws["!merges"] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 1 } },
+      { s: { r: 0, c: 3 }, e: { r: 0, c: 4 } },
+    ];
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Plan");
+    XLSX.writeFile(wb, "lager-planung.xlsx");
+  };
+
   const aktuellerSlotIndex = useMemo(() => {
     if (!angezeigteUhrzeit) return -1;
 
@@ -468,6 +634,31 @@ export default function Home() {
         >
           Mitarbeiter hinzufügen
         </button>
+      </div>
+
+      <div className="bg-white p-4 rounded-xl shadow mb-6">
+        <div className="flex flex-wrap gap-3">
+          <button
+            onClick={handleBandNeuMischen}
+            className="bg-blue-600 text-white px-4 py-2 rounded"
+          >
+            Band neu mischen
+          </button>
+
+          <button
+            onClick={handleTischNeuMischen}
+            className="bg-purple-600 text-white px-4 py-2 rounded"
+          >
+            Tische neu mischen
+          </button>
+
+          <button
+            onClick={handleExcelDownload}
+            className="bg-green-600 text-white px-4 py-2 rounded"
+          >
+            Excel herunterladen
+          </button>
+        </div>
       </div>
 
       <div className="bg-white p-4 rounded-xl shadow mb-6">
